@@ -3,6 +3,7 @@ import pkg_resources
 import re
 import sre_constants
 import sys
+import xmlrpclib
 from warnings import warn
 
 from django.conf import settings
@@ -18,7 +19,7 @@ from reviewboard.accounts.forms import ActiveDirectorySettingsForm, \
                                        NISSettingsForm, \
                                        StandardAuthSettingsForm, \
                                        X509SettingsForm
-
+from reviewboard.bugzilla.transports import cookie_transport
 
 _auth_backends = []
 _auth_backend_setting = None
@@ -38,7 +39,7 @@ class AuthBackend(object):
     def authenticate(self, username, password):
         raise NotImplementedError
 
-    def get_or_create_user(self, username):
+    def get_or_create_user(self, username, request):
         raise NotImplementedError
 
     def get_user(self, user_id):
@@ -95,8 +96,8 @@ class StandardAuthBackend(AuthBackend, ModelBackend):
     def authenticate(self, username, password):
         return ModelBackend.authenticate(self, username, password)
 
-    def get_or_create_user(self, username):
-        return ModelBackend.get_or_create_user(self, username)
+    def get_or_create_user(self, username, request):
+        return ModelBackend.get_or_create_user(self, username, request)
 
     def update_password(self, user, password):
         user.password = hashers.make_password(password)
@@ -118,7 +119,7 @@ class NISBackend(AuthBackend):
             new_crypted = crypt.crypt(password, original_crypted)
 
             if original_crypted == new_crypted:
-                return self.get_or_create_user(username, passwd)
+                return self.get_or_create_user(username, None, passwd)
         except nis.error:
             # FIXME I'm not sure under what situations this would fail (maybe if
             # their NIS server is down), but it'd be nice to inform the user.
@@ -126,7 +127,7 @@ class NISBackend(AuthBackend):
 
         return None
 
-    def get_or_create_user(self, username, passwd=None):
+    def get_or_create_user(self, username, request, passwd=None):
         import nis
 
         username = username.strip()
@@ -208,7 +209,7 @@ class LDAPBackend(AuthBackend):
                 userbinding=','.join([uid,settings.LDAP_BASE_DN])
                 ldapo.bind_s(userbinding, password)
 
-            return self.get_or_create_user(username, ldapo)
+            return self.get_or_create_user(username, request, ldapo)
 
         except ImportError:
             pass
@@ -227,7 +228,7 @@ class LDAPBackend(AuthBackend):
 
         return None
 
-    def get_or_create_user(self, username, ldapo):
+    def get_or_create_user(self, username, request, ldapo):
         username = username.strip()
 
         try:
@@ -410,7 +411,7 @@ class ActiveDirectoryBackend(AuthBackend):
                         logging.warning("Active Directory: User %s is not in required group %s" % (username, required_group))
                         return None
 
-                return self.get_or_create_user(username, user_data)
+                return self.get_or_create_user(username, request, user_data)
             except ldap.SERVER_DOWN:
                 logging.warning('Active Directory: Domain controller is down')
                 continue
@@ -421,7 +422,7 @@ class ActiveDirectoryBackend(AuthBackend):
         logging.error('Active Directory error: Could not contact any domain controller servers')
         return None
 
-    def get_or_create_user(self, username, ad_user_data):
+    def get_or_create_user(self, username, request, ad_user_data):
         username = username.strip()
 
         try:
@@ -480,7 +481,7 @@ class X509Backend(AuthBackend):
 
         return username
 
-    def get_or_create_user(self, username):
+    def get_or_create_user(self, username, request):
         user = None
         username = username.strip()
 
@@ -498,6 +499,66 @@ class X509Backend(AuthBackend):
                 user.save()
 
         return user
+
+
+class BugzillaBackend(AuthBackend):
+    """
+    Authenticate a user via Bugzilla XMLRPC.
+    """
+    name = _('Bugzilla')
+
+    def get_user_from_xmlrpc(self, proxy, user_data):
+        username = user_data['users'][0]['email']
+        real_name = user_data['users'][0]['real_name']
+        try:
+            user = User.objects.get(username=username)
+        except User.DoesNotExist:
+            user = User(username=username, password='from bugzilla',
+                        first_name=real_name)
+            user.save()
+            return user
+        if user.first_name != real_name:
+            user.first_name = real_name
+            user.save()
+        return user
+
+    def authenticate(self, username, password, cookie=False):
+        username = username.strip()
+        transport = cookie_transport(settings.BUGZILLA_XMLRPC_URL)
+        proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL, transport)
+        if cookie:
+            transport.cookies.append('Bugzilla_login=%s' % username)
+            transport.cookies.append('Bugzilla_logincookie=%s' % password)
+            user_id = username
+        else:
+            try:
+                result = proxy.User.login({'login': username,
+                                           'password': password})
+            except xmlrpclib.Fault:
+                return None
+            user_id = result['id']
+        try:
+            user_data = proxy.User.get({'ids': [user_id]})
+        except xmlrpclib.Fault:
+            return None
+        return self.get_user_from_xmlrpc(proxy, user_data)
+
+    def get_or_create_user(self, username, request):
+        username = username.strip()
+        try:
+            return User.objects.get(username=username)
+        except User.DoesNotExist:
+            bzlogin = request.COOKIES.get('Bugzilla_login')
+            bzcookie = request.COOKIES.get('Bugzilla_logincookie')
+            if not bzlogin or not bzcookie:
+                return None
+            transport = cookie_transport(settings.BUGZILLA_XMLRPC_URL)
+            transport.cookies.append('Bugzilla_login=%s' % bzlogin)
+            transport.cookies.append('Bugzilla_logincookie=%s' % bzcookie)
+            proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL,
+                                          transport)
+            user_data = proxy.User.get({'names': [username]})
+            return self.get_user_from_xmlrpc(proxy, user_data)
 
 
 def get_registered_auth_backends():

@@ -79,7 +79,9 @@
 {%  if user.is_staff %}
        <li><a href="{% url reviewboard.admin.views.dashboard %}">{% trans "Admin" %}</a></li>
 {%  endif %}
+{%  if auth_backends.0.name != "Bugzilla" %}
        <li><a href="{% url logout %}">{% trans "Log out" %}</a></li>
+{%  endif %}
       </ul>
      </li>
 {% else %}
