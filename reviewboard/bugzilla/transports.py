@@ -71,20 +71,47 @@ class CookieTransportMixin:
         return unmarshaller.close()
 
 
-class CookieTransport(CookieTransportMixin, xmlrpclib.Transport):
+class BugzillaTransportMixin(CookieTransportMixin):
+
+    LOGIN = 'Bugzilla_login'
+    LOGIN_COOKIE = 'Bugzilla_logincookie'
+
+    def remove_bugzilla_cookies(self):
+        self.cookies = [x for x in self.cookies
+                        if not x.startswith('%s=' % self.LOGIN) and
+                        not x.startswith('%s=' % self.LOGIN_COOKIE)]
+
+    def set_bugzilla_cookies(self, login, login_cookie):
+        self.remove_bugzilla_cookies()
+        self.cookies.append('%s=%s' % (self.LOGIN, login))
+        self.cookies.append('%s=%s' % (self.LOGIN_COOKIE, login_cookie))
+
+    def bugzilla_cookies(self):
+        login = ''
+        login_cookie = ''
+        for c in self.cookies:
+            name, _, val = c.partition('=')
+            if name == self.LOGIN:
+                login = val
+            elif name == self.LOGIN_COOKIE:
+                login_cookie = val
+        return (login, login_cookie)
+
+
+class BugzillaTransport(BugzillaTransportMixin, xmlrpclib.Transport):
     pass
 
 
-class CookieSafeTransport(CookieTransportMixin, xmlrpclib.SafeTransport):
+class BugzillaSafeTransport(BugzillaTransportMixin, xmlrpclib.SafeTransport):
     pass
 
 
-def cookie_transport(uri):
+def bugzilla_transport(uri):
     """Return an appropriate Transport for the URI.
 
     If the URI type is https, return a CookieSafeTransport.
     If the type is http, return a CookieTransport.
     """
     if urlparse.urlparse(uri, "http")[0] == "https":
-        return CookieSafeTransport()
-    return CookieTransport()
+        return BugzillaSafeTransport()
+    return BugzillaTransport()

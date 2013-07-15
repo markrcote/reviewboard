@@ -46,6 +46,8 @@ class BugzillaCookieAuthMiddleware(object):
             bzcookie = getattr(request.user, 'bzcookie')
         except AttributeError:
             return response
+        if not bzlogin or not bzcookie:
+            return response
         response.set_cookie('Bugzilla_login', bzlogin)
         response.set_cookie('Bugzilla_logincookie', bzcookie)
         return response

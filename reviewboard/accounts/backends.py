@@ -21,7 +21,7 @@ from reviewboard.accounts.forms import ActiveDirectorySettingsForm, \
                                        NISSettingsForm, \
                                        StandardAuthSettingsForm, \
                                        X509SettingsForm
-from reviewboard.bugzilla.transports import cookie_transport
+from reviewboard.bugzilla.transports import bugzilla_transport
 
 _auth_backends = []
 _auth_backend_setting = None
@@ -530,13 +530,14 @@ class BugzillaBackend(AuthBackend):
 
     def authenticate(self, username, password, cookie=False):
         username = username.strip()
-        transport = cookie_transport(settings.BUGZILLA_XMLRPC_URL)
+        transport = bugzilla_transport(settings.BUGZILLA_XMLRPC_URL)
         proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL, transport)
         if cookie:
-            transport.cookies.append('Bugzilla_login=%s' % username)
-            transport.cookies.append('Bugzilla_logincookie=%s' % password)
+            # Username and password are actually bugzilla cookies.
+            transport.set_bugzilla_cookies(username, password)
             user_id = username
         else:
+            transport.remove_bugzilla_cookies()
             try:
                 result = proxy.User.login({'login': username,
                                            'password': password})
@@ -549,12 +550,7 @@ class BugzillaBackend(AuthBackend):
             return None
         user = self.get_user_from_xmlrpc(proxy, user_data)
         if not cookie:
-            for c in transport.cookies:
-                name, _, val = c.partition('=')
-                if name == 'Bugzilla_login':
-                    user.bzlogin = val
-                elif name == 'Bugzilla_logincookie':
-                    user.bzcookie = val
+            (user.bzlogin, user.bzcookie) = transport.bugzilla_cookies()
         return user
 
     def get_or_create_user(self, username, request):
@@ -566,9 +562,8 @@ class BugzillaBackend(AuthBackend):
             bzcookie = request.COOKIES.get('Bugzilla_logincookie')
             if not bzlogin or not bzcookie:
                 raise self.bz_error_response(request)
-            transport = cookie_transport(settings.BUGZILLA_XMLRPC_URL)
-            transport.cookies.append('Bugzilla_login=%s' % bzlogin)
-            transport.cookies.append('Bugzilla_logincookie=%s' % bzcookie)
+            transport = bugzilla_transport(settings.BUGZILLA_XMLRPC_URL)
+            transport.set_bugzilla_cookies(bzlogin, bzcookie)
             proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL,
                                           transport)
             try:
