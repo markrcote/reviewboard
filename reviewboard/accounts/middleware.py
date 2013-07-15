@@ -34,3 +34,18 @@ class BugzillaCookieAuthMiddleware(object):
         user = authenticate(username=bzlogin, password=bzcookie, cookie=True)
         if user is not None and user.is_active:
             login(request, user)
+
+    def process_response(self, request, response):
+        if ('reviewboard.accounts.backends.BugzillaBackend'
+            not in settings.AUTHENTICATION_BACKENDS):
+            return response
+        if not request.user.is_authenticated():
+            return response
+        try:
+            bzlogin = getattr(request.user, 'bzlogin')
+            bzcookie = getattr(request.user, 'bzcookie')
+        except AttributeError:
+            return response
+        response.set_cookie('Bugzilla_login', bzlogin)
+        response.set_cookie('Bugzilla_logincookie', bzcookie)
+        return response

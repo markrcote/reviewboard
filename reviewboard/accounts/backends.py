@@ -11,6 +11,8 @@ from django.contrib.auth.backends import ModelBackend
 from django.contrib.auth.models import User
 from django.contrib.auth import get_backends
 from django.contrib.auth import hashers
+from django.contrib.auth import logout
+from django.core.exceptions import PermissionDenied
 from django.utils.translation import ugettext as _
 from djblets.util.misc import get_object_or_none
 
@@ -507,6 +509,10 @@ class BugzillaBackend(AuthBackend):
     """
     name = _('Bugzilla')
 
+    def bz_error_response(self, request):
+        logout(request)
+        return PermissionDenied
+
     def get_user_from_xmlrpc(self, proxy, user_data):
         username = user_data['users'][0]['email']
         real_name = user_data['users'][0]['real_name']
@@ -541,7 +547,15 @@ class BugzillaBackend(AuthBackend):
             user_data = proxy.User.get({'ids': [user_id]})
         except xmlrpclib.Fault:
             return None
-        return self.get_user_from_xmlrpc(proxy, user_data)
+        user = self.get_user_from_xmlrpc(proxy, user_data)
+        if not cookie:
+            for c in transport.cookies:
+                name, _, val = c.partition('=')
+                if name == 'Bugzilla_login':
+                    user.bzlogin = val
+                elif name == 'Bugzilla_logincookie':
+                    user.bzcookie = val
+        return user
 
     def get_or_create_user(self, username, request):
         username = username.strip()
@@ -551,13 +565,16 @@ class BugzillaBackend(AuthBackend):
             bzlogin = request.COOKIES.get('Bugzilla_login')
             bzcookie = request.COOKIES.get('Bugzilla_logincookie')
             if not bzlogin or not bzcookie:
-                return None
+                raise self.bz_error_response(request)
             transport = cookie_transport(settings.BUGZILLA_XMLRPC_URL)
             transport.cookies.append('Bugzilla_login=%s' % bzlogin)
             transport.cookies.append('Bugzilla_logincookie=%s' % bzcookie)
             proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL,
                                           transport)
-            user_data = proxy.User.get({'names': [username]})
+            try:
+                user_data = proxy.User.get({'names': [username]})
+            except xmlrpclib.Fault:
+                raise self.bz_error_response(request)
             return self.get_user_from_xmlrpc(proxy, user_data)
 
 

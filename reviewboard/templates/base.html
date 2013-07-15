@@ -79,6 +79,11 @@
 {%  if user.is_staff %}
        <li><a href="{% url reviewboard.admin.views.dashboard %}">{% trans "Admin" %}</a></li>
 {%  endif %}
+{#  Logging out when authenticated through Bugzilla doesn't really make  #}
+{#  sense, since we are using Bugzilla sessions, and we shouldn't be     #}
+{#  able to log out of Bugzilla via ReviewBoard.                         #}
+{#  Note that if a user manually goes to the logout URL, the             #}
+{#  BugzillaCookieAuthMiddleware will just log them back in immediately. #}
 {%  if auth_backends.0.name != "Bugzilla" %}
        <li><a href="{% url logout %}">{% trans "Log out" %}</a></li>
 {%  endif %}

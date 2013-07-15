@@ -4670,11 +4670,15 @@ class ReviewRequestDraftResource(WebAPIResource):
         for field_name, field_info in self.fields.iteritems():
             if (field_info.get('mutable', True) and
                 kwargs.get(field_name, None) is not None):
-                field_result, field_modified_objects, invalid = \
-                    self._set_draft_field_data(draft, field_name,
-                                               kwargs[field_name],
-                                               local_site_name, request)
-
+                try:
+                    field_result, field_modified_objects, invalid = \
+                        self._set_draft_field_data(draft, field_name,
+                                                   kwargs[field_name],
+                                                   local_site_name, request)
+                except PermissionDenied:
+                    return 401, {
+                        'location': settings.BUGZILLA_HTML_LOGIN_URL
+                    }
                 if invalid:
                     invalid_fields[field_name] = invalid
                 elif field_modified_objects:
@@ -4783,6 +4787,8 @@ class ReviewRequestDraftResource(WebAPIResource):
                         obj = ReviewRequest.objects.for_id(value, local_site)
 
                     target.add(obj)
+                except PermissionDenied:
+                    raise
                 except:
                     invalid_entries.append(value)
         elif field_name == 'bugs_closed':
@@ -4838,6 +4844,8 @@ class ReviewRequestDraftResource(WebAPIResource):
             for backend in auth.get_backends():
                 try:
                     user = backend.get_or_create_user(username, request)
+                except PermissionDenied:
+                    raise
                 except:
                     pass
 
