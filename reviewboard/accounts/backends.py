@@ -538,6 +538,8 @@ class BugzillaBackend(AuthBackend):
         if not users:
             return None
         user = users[0]
+        if not user.is_active:
+            return None
         if not cookie:
             (user.bzlogin, user.bzcookie) = transport.bugzilla_cookies()
         return user
