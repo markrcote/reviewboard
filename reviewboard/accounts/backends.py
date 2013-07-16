@@ -22,7 +22,7 @@ from reviewboard.accounts.forms import ActiveDirectorySettingsForm, \
                                        StandardAuthSettingsForm, \
                                        X509SettingsForm
 from reviewboard.bugzilla.models import get_or_create_bugzilla_users
-from reviewboard.bugzilla.transports import bugzilla_transport
+from reviewboard.bugzilla.xmlrpc import bugzilla_transport
 
 _auth_backends = []
 _auth_backend_setting = None

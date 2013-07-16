@@ -44,7 +44,7 @@ from reviewboard.accounts.models import Profile
 from reviewboard.attachments.forms import UploadFileForm
 from reviewboard.attachments.models import FileAttachment
 from reviewboard.bugzilla.models import get_or_create_bugzilla_users
-from reviewboard.bugzilla.transports import bugzilla_transport
+from reviewboard.bugzilla.xmlrpc import bugzilla_transport
 from reviewboard.changedescs.models import ChangeDescription
 from reviewboard.diffviewer.diffutils import get_diff_files, \
                                              get_original_file, \
