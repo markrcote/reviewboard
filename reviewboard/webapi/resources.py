@@ -2438,25 +2438,10 @@ class UserResource(WebAPIResource, DjbletsUserResource):
                 if field not in self.hidden_fields
             ], request)
 
-    def store_bugzilla_users(self, request, query):
-        if not query:
-            return
-        transport = bugzilla_transport(settings.BUGZILLA_XMLRPC_URL)
-        if not transport.set_bugzilla_cookies_from_request(request):
-            raise PermissionDenied
-        proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL,
-                                      transport)
-        try:
-            get_or_create_bugzilla_users(proxy.User.get({'match': [query]}))
-        except xmlrpclib.Fault:
-            raise PermissionDenied
-
     def get_queryset(self, request, local_site_name=None, *args, **kwargs):
         bugzilla = ('reviewboard.accounts.backends.BugzillaBackend'
                     in settings.AUTHENTICATION_BACKENDS)
         search_q = request.GET.get('q', None)
-        if bugzilla:
-            self.store_bugzilla_users(request, search_q)
 
         local_site = _get_local_site(local_site_name)
         if local_site:

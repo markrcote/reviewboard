@@ -534,27 +534,32 @@ class BugzillaBackend(AuthBackend):
             user_data = proxy.User.get({'ids': [user_id]})
         except xmlrpclib.Fault:
             return None
-        user = get_or_create_bugzilla_users(user_data)[0]
+        users = get_or_create_bugzilla_users(user_data)
+        if not users:
+            return None
+        user = users[0]
         if not cookie:
             (user.bzlogin, user.bzcookie) = transport.bugzilla_cookies()
         return user
 
     def get_or_create_user(self, username, request):
-        """Always check Bugzilla for updates."""
         username = username.strip()
-        transport = bugzilla_transport(settings.BUGZILLA_XMLRPC_URL)
-        if not transport.set_bugzilla_cookies_from_request(request):
-            raise self.bz_error_response(request)
-        proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL, transport)
-        try:
-            user_data = proxy.User.get({'names': [username]})
-        except xmlrpclib.Fault:
-            raise self.bz_error_response(request)
-        get_or_create_bugzilla_users(user_data)[0]
         try:
             return User.objects.get(username=username)
         except User.DoesNotExist:
-            return None
+            transport = bugzilla_transport(settings.BUGZILLA_XMLRPC_URL)
+            if not transport.set_bugzilla_cookies_from_request(request):
+                raise self.bz_error_response(request)
+            proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL,
+                                          transport)
+            try:
+                user_data = proxy.User.get({'names': [username]})
+            except xmlrpclib.Fault:
+                raise self.bz_error_response(request)
+            users = get_or_create_bugzilla_users(user_data)
+            if not users:
+                return None
+            return users[0]
 
 
 def get_registered_auth_backends():
