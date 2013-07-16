@@ -21,6 +21,7 @@ from reviewboard.accounts.forms import ActiveDirectorySettingsForm, \
                                        NISSettingsForm, \
                                        StandardAuthSettingsForm, \
                                        X509SettingsForm
+from reviewboard.bugzilla.models import get_or_create_bugzilla_users
 from reviewboard.bugzilla.transports import bugzilla_transport
 
 _auth_backends = []
@@ -513,21 +514,6 @@ class BugzillaBackend(AuthBackend):
         logout(request)
         return PermissionDenied
 
-    def get_user_from_xmlrpc(self, proxy, user_data):
-        username = user_data['users'][0]['email']
-        real_name = user_data['users'][0]['real_name']
-        try:
-            user = User.objects.get(username=username)
-        except User.DoesNotExist:
-            user = User(username=username, password='from bugzilla',
-                        first_name=real_name)
-            user.save()
-            return user
-        if user.first_name != real_name:
-            user.first_name = real_name
-            user.save()
-        return user
-
     def authenticate(self, username, password, cookie=False):
         username = username.strip()
         transport = bugzilla_transport(settings.BUGZILLA_XMLRPC_URL)
@@ -548,7 +534,7 @@ class BugzillaBackend(AuthBackend):
             user_data = proxy.User.get({'ids': [user_id]})
         except xmlrpclib.Fault:
             return None
-        user = self.get_user_from_xmlrpc(proxy, user_data)
+        user = get_or_create_bugzilla_users(user_data)[0]
         if not cookie:
             (user.bzlogin, user.bzcookie) = transport.bugzilla_cookies()
         return user
@@ -558,19 +544,16 @@ class BugzillaBackend(AuthBackend):
         try:
             return User.objects.get(username=username)
         except User.DoesNotExist:
-            bzlogin = request.COOKIES.get('Bugzilla_login')
-            bzcookie = request.COOKIES.get('Bugzilla_logincookie')
-            if not bzlogin or not bzcookie:
-                raise self.bz_error_response(request)
             transport = bugzilla_transport(settings.BUGZILLA_XMLRPC_URL)
-            transport.set_bugzilla_cookies(bzlogin, bzcookie)
+            if not transport.set_bugzilla_cookies_from_request(request):
+                raise self.bz_error_response(request)
             proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL,
                                           transport)
             try:
                 user_data = proxy.User.get({'names': [username]})
             except xmlrpclib.Fault:
                 raise self.bz_error_response(request)
-            return self.get_user_from_xmlrpc(proxy, user_data)
+            return get_or_create_bugzilla_users(user_data)[0]
 
 
 def get_registered_auth_backends():

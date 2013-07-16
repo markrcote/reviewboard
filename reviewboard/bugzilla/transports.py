@@ -86,6 +86,14 @@ class BugzillaTransportMixin(CookieTransportMixin):
         self.cookies.append('%s=%s' % (self.LOGIN, login))
         self.cookies.append('%s=%s' % (self.LOGIN_COOKIE, login_cookie))
 
+    def set_bugzilla_cookies_from_request(self, request):
+        bzlogin = request.COOKIES.get('Bugzilla_login')
+        bzcookie = request.COOKIES.get('Bugzilla_logincookie')
+        if bzlogin and bzcookie:
+            self.set_bugzilla_cookies(bzlogin, bzcookie)
+            return True
+        return False
+
     def bugzilla_cookies(self):
         login = ''
         login_cookie = ''
