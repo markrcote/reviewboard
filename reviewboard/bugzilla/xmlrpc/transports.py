@@ -4,7 +4,8 @@ import xmlrpclib
 class CookieTransportMixin:
     """A Transport request method that retains cookies over its lifetime.
 
-    Taken from http://www.lunch.org.uk/wiki/xmlrpccookies
+    Taken from http://www.lunch.org.uk/wiki/xmlrpccookies with permission
+    from the author.
 
     The regular xmlrpclib transports ignore cookies. Which causes
     a bit of a problem when you need a cookie-based login, as with
