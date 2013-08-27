@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import xmlrpclib
 from time import time
 from urllib import quote as urllib_quote
 
@@ -42,6 +43,8 @@ from reviewboard import get_version_string, get_package_version, is_release
 from reviewboard.accounts.models import Profile
 from reviewboard.attachments.forms import UploadFileForm
 from reviewboard.attachments.models import FileAttachment
+from reviewboard.bugzilla.models import get_or_create_bugzilla_users
+from reviewboard.bugzilla.xmlrpc import bugzilla_transport
 from reviewboard.changedescs.models import ChangeDescription
 from reviewboard.diffviewer.diffutils import get_diff_files, \
                                              get_original_file, \
@@ -2449,6 +2452,8 @@ class UserResource(WebAPIResource, DjbletsUserResource):
             ], request)
 
     def get_queryset(self, request, local_site_name=None, *args, **kwargs):
+        bugzilla = ('reviewboard.accounts.backends.BugzillaBackend'
+                    in settings.AUTHENTICATION_BACKENDS)
         search_q = request.GET.get('q', None)
 
         local_site = _get_local_site(local_site_name)
@@ -2458,11 +2463,16 @@ class UserResource(WebAPIResource, DjbletsUserResource):
             query = self.model.objects.filter(is_active=True)
 
         if search_q:
-            q = Q(username__istartswith=search_q)
+            if bugzilla:
+                # Emulate Bugzilla's autocomplete.
+                q = (Q(username__icontains=search_q) |
+                     Q(first_name__icontains=search_q))
+            else:
+                q = Q(username__istartswith=search_q)
 
-            if request.GET.get('fullname', None):
-                q = q | (Q(first_name__istartswith=search_q) |
-                         Q(last_name__istartswith=search_q))
+                if request.GET.get('fullname', None):
+                    q = q | (Q(first_name__istartswith=search_q) |
+                             Q(last_name__istartswith=search_q))
 
             query = query.filter(q)
 
@@ -4541,11 +4551,15 @@ class ReviewRequestDraftResource(WebAPIResource):
         for field_name, field_info in self.fields.iteritems():
             if (field_info.get('mutable', True) and
                 kwargs.get(field_name, None) is not None):
-                field_result, field_modified_objects, invalid = \
-                    self._set_draft_field_data(draft, field_name,
-                                               kwargs[field_name],
-                                               local_site_name, request)
-
+                try:
+                    field_result, field_modified_objects, invalid = \
+                        self._set_draft_field_data(draft, field_name,
+                                                   kwargs[field_name],
+                                                   local_site_name, request)
+                except PermissionDenied:
+                    return 401, {
+                        'location': settings.BUGZILLA_HTML_LOGIN_URL
+                    }
                 if invalid:
                     invalid_fields[field_name] = invalid
                 elif field_modified_objects:
@@ -4709,6 +4723,8 @@ class ReviewRequestDraftResource(WebAPIResource):
             for backend in auth.get_backends():
                 try:
                     user = backend.get_or_create_user(username, request)
+                except PermissionDenied:
+                    raise
                 except:
                     pass
 

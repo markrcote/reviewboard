@@ -3,6 +3,7 @@ import pkg_resources
 import re
 import sre_constants
 import sys
+import xmlrpclib
 from warnings import warn
 
 from django.conf import settings
@@ -10,6 +11,8 @@ from django.contrib.auth.backends import ModelBackend
 from django.contrib.auth.models import User
 from django.contrib.auth import get_backends
 from django.contrib.auth import hashers
+from django.contrib.auth import logout
+from django.core.exceptions import PermissionDenied
 from django.utils.translation import ugettext as _
 from djblets.util.misc import get_object_or_none
 
@@ -18,7 +21,8 @@ from reviewboard.accounts.forms import ActiveDirectorySettingsForm, \
                                        NISSettingsForm, \
                                        StandardAuthSettingsForm, \
                                        X509SettingsForm
-
+from reviewboard.bugzilla.models import get_or_create_bugzilla_users
+from reviewboard.bugzilla.xmlrpc import bugzilla_transport
 
 _auth_backends = []
 _auth_backend_setting = None
@@ -498,6 +502,66 @@ class X509Backend(AuthBackend):
                 user.save()
 
         return user
+
+
+class BugzillaBackend(AuthBackend):
+    """
+    Authenticate a user via Bugzilla XMLRPC.
+    """
+    name = _('Bugzilla')
+
+    def bz_error_response(self, request):
+        logout(request)
+        return PermissionDenied
+
+    def authenticate(self, username, password, cookie=False):
+        username = username.strip()
+        transport = bugzilla_transport(settings.BUGZILLA_XMLRPC_URL)
+        proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL, transport)
+        if cookie:
+            # Username and password are actually bugzilla cookies.
+            transport.set_bugzilla_cookies(username, password)
+            user_id = username
+        else:
+            transport.remove_bugzilla_cookies()
+            try:
+                result = proxy.User.login({'login': username,
+                                           'password': password})
+            except xmlrpclib.Fault:
+                return None
+            user_id = result['id']
+        try:
+            user_data = proxy.User.get({'ids': [user_id]})
+        except xmlrpclib.Fault:
+            return None
+        users = get_or_create_bugzilla_users(user_data)
+        if not users:
+            return None
+        user = users[0]
+        if not user.is_active:
+            return None
+        if not cookie:
+            (user.bzlogin, user.bzcookie) = transport.bugzilla_cookies()
+        return user
+
+    def get_or_create_user(self, username, request):
+        username = username.strip()
+        try:
+            return User.objects.get(username=username)
+        except User.DoesNotExist:
+            transport = bugzilla_transport(settings.BUGZILLA_XMLRPC_URL)
+            if not transport.set_bugzilla_cookies_from_request(request):
+                raise self.bz_error_response(request)
+            proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL,
+                                          transport)
+            try:
+                user_data = proxy.User.get({'names': [username]})
+            except xmlrpclib.Fault:
+                raise self.bz_error_response(request)
+            users = get_or_create_bugzilla_users(user_data)
+            if not users:
+                return None
+            return users[0]
 
 
 def get_registered_auth_backends():

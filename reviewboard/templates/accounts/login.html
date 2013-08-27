@@ -6,7 +6,11 @@
 {% block title %}{% trans "Log In" %}{% endblock %}
 
 {% block content %}
-{%  if not auth_backends.0.supports_registration %}
+{%  if auth_backends.0.name == "Bugzilla" %}
+{%  box "important" %}
+<h1>{% trans "Log in with your Bugzilla username and password" %}</h1>
+{%  endbox %}
+{%  elif not auth_backends.0.supports_registration %}
 {%  box "important" %}
 <h1>{% trans "Log in with your standard username and password" %}</h1>
  <p>

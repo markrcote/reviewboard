@@ -80,6 +80,7 @@ MIDDLEWARE_CLASSES = [
     'djblets.log.middleware.LoggingMiddleware',
     'reviewboard.accounts.middleware.TimezoneMiddleware',
     'reviewboard.admin.middleware.CheckUpdatesRequiredMiddleware',
+    'reviewboard.accounts.middleware.BugzillaCookieAuthMiddleware',
     'reviewboard.admin.middleware.X509AuthMiddleware',
     'reviewboard.site.middleware.LocalSiteMiddleware',
 ]
