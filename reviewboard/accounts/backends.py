@@ -545,23 +545,22 @@ class BugzillaBackend(AuthBackend):
         return user
 
     def get_or_create_user(self, username, request):
+        """Always check Bugzilla for updates."""
         username = username.strip()
+        transport = bugzilla_transport(settings.BUGZILLA_XMLRPC_URL)
+        if not transport.set_bugzilla_cookies_from_request(request):
+            raise self.bz_error_response(request)
+        proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL, transport)
+        try:
+            user_data = proxy.User.get({'names': [username]})
+        except xmlrpclib.Fault:
+            raise self.bz_error_response(request)
+        # Just store the results.
+        get_or_create_bugzilla_users(user_data)
         try:
             return User.objects.get(username=username)
         except User.DoesNotExist:
-            transport = bugzilla_transport(settings.BUGZILLA_XMLRPC_URL)
-            if not transport.set_bugzilla_cookies_from_request(request):
-                raise self.bz_error_response(request)
-            proxy = xmlrpclib.ServerProxy(settings.BUGZILLA_XMLRPC_URL,
-                                          transport)
-            try:
-                user_data = proxy.User.get({'names': [username]})
-            except xmlrpclib.Fault:
-                raise self.bz_error_response(request)
-            users = get_or_create_bugzilla_users(user_data)
-            if not users:
-                return None
-            return users[0]
+            return None
 
 
 def get_registered_auth_backends():
