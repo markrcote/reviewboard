@@ -25,6 +25,8 @@ class BugzillaCookieAuthMiddleware(object):
             not in settings.AUTHENTICATION_BACKENDS):
             return response
         if not request.user.is_authenticated():
+            response.delete_cookie('Bugzilla_login')
+            response.delete_cookie('Bugzilla_logincookie')
             return response
         try:
             bzlogin = getattr(request.user, 'bzlogin')
