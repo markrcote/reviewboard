@@ -248,7 +248,7 @@ def new_review_request(request,
                     parent_diff_file=request.FILES.get('parent_diff_path'),
                     local_site=local_site)
                 return HttpResponseRedirect(review_request.get_absolute_url())
-            except (OwnershipError, SCMError, SSHError, ValueError):
+            except:
                 pass
     else:
         form = NewReviewRequestForm(request, request.user, local_site)
@@ -395,9 +395,12 @@ def review_detail(request,
     else:
         draft_timestamp = ""
 
-    etag = "%s:%s:%s:%s:%s:%s:%s" % (
+    blocks = list(review_request.blocks.all())
+
+    etag = "%s:%s:%s:%s:%s:%s:%s:%s" % (
         request.user, last_activity_time, draft_timestamp,
         review_timestamp, review_request.last_review_activity_timestamp,
+        ','.join([str(r.pk) for r in blocks]),
         int(starred), settings.AJAX_SERIAL
     )
 
@@ -684,6 +687,7 @@ def review_detail(request,
             close_description = latest_changedesc.text
 
     context_data = make_review_request_context(request, review_request, {
+        'blocks': blocks,
         'draft': draft,
         'detail_hooks': ReviewRequestDetailHook.hooks,
         'review_request_details': review_request_details,
@@ -746,8 +750,9 @@ def all_review_requests(request,
             return _render_permission_denied(request)
     else:
         local_site = None
-    datagrid = ReviewRequestDataGrid(request,
-        ReviewRequest.objects.public(request.user,
+    datagrid = ReviewRequestDataGrid(
+        request,
+        ReviewRequest.objects.public(user=request.user,
                                      status=None,
                                      local_site=local_site,
                                      with_counts=True),
@@ -857,7 +862,10 @@ def group(request,
             request, 'reviews/group_permission_denied.html')
 
     datagrid = ReviewRequestDataGrid(request,
-        ReviewRequest.objects.to_group(name, local_site, status=None,
+        ReviewRequest.objects.to_group(name,
+                                       local_site,
+                                       user=request.user,
+                                       status=None,
                                        with_counts=True),
         _("Review requests for %s") % name)
 
@@ -920,15 +928,19 @@ def submitter(request,
         user = get_object_or_404(User, username=username)
 
     datagrid = ReviewRequestDataGrid(request,
-        ReviewRequest.objects.from_user(username, status=None,
+        ReviewRequest.objects.from_user(username,
+                                        user=request.user,
+                                        status=None,
                                         with_counts=True,
-                                        local_site=local_site),
+                                        local_site=local_site,
+                                        filter_private=True),
         _("%s's review requests") % username,
         local_site=local_site)
 
     return datagrid.render_to_response(template_name, extra_context={
         'show_profile': user.is_profile_visible(request.user),
         'viewing_user': user,
+        'groups': user.review_groups.accessible(request.user),
     })
 
 
@@ -989,6 +1001,12 @@ def diff(request,
     file_attachments = list(review_request.get_file_attachments())
     screenshots = list(review_request.get_screenshots())
 
+    try:
+        latest_changedesc = \
+            review_request.changedescs.filter(public=True).latest()
+    except ChangeDescription.DoesNotExist:
+        latest_changedesc = None
+
     # Compute the lists of comments based on filediffs and interfilediffs.
     # We do this using the 'through' table so that we can select_related
     # the reviews and comments.
@@ -1008,9 +1026,18 @@ def diff(request,
         else:
             comments[key] = [comment]
 
+    close_description = None
+
+    if latest_changedesc and 'status' in latest_changedesc.fields_changed:
+        status = latest_changedesc.fields_changed['status']['new'][0]
+
+        if status in (ReviewRequest.DISCARDED, ReviewRequest.SUBMITTED):
+            close_description = latest_changedesc.text
+
     return view_diff(
          request, diffset, interdiffset, template_name=template_name,
          extra_context=make_review_request_context(request, review_request, {
+            'close_description': close_description,
             'diffsets': diffsets,
             'latest_diffset': latest_diffset,
             'review': pending_review,

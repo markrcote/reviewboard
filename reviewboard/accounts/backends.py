@@ -21,6 +21,9 @@ from reviewboard.accounts.forms import ActiveDirectorySettingsForm, \
                                        NISSettingsForm, \
                                        StandardAuthSettingsForm, \
                                        X509SettingsForm
+from reviewboard.accounts.models import LocalSiteProfile
+from reviewboard.site.models import LocalSite
+
 from reviewboard.bugzilla.models import get_or_create_bugzilla_users
 from reviewboard.bugzilla.xmlrpc import bugzilla_transport
 
@@ -89,6 +92,22 @@ class AuthBackend(object):
 
 
 class StandardAuthBackend(AuthBackend, ModelBackend):
+    """Authenticates users against the local database.
+
+    This will authenticate a user against their entry in the database, if
+    the user has a local password stored. This is the default form of
+    authentication in Review Board.
+
+    This backend also handles permission checking for users on LocalSites.
+    In Django, this is the responsibility of at least one auth backend in
+    the list of configured backends.
+
+    Regardless of the specific type of authentication chosen for the
+    installation, StandardAuthBackend will always be provided in the list
+    of configured backends. Because of this, it will always be able to
+    handle authentication against locally added users and handle
+    LocalSite-based permissions for all configurations.
+    """
     name = _('Standard Registration')
     settings_form = StandardAuthSettingsForm
     supports_registration = True
@@ -104,6 +123,94 @@ class StandardAuthBackend(AuthBackend, ModelBackend):
 
     def update_password(self, user, password):
         user.password = hashers.make_password(password)
+
+    def get_all_permissions(self, user, obj=None):
+        """Returns a list of all permissions for a user.
+
+        If a LocalSite instance is passed as ``obj``, then the permissions
+        returned will be those that the user has on that LocalSite. Otherwise,
+        they will be their global permissions.
+
+        It is not legal to pass any other object.
+        """
+        if obj is not None and not isinstance(obj, LocalSite):
+            logging.error('Unexpected object %r passed to '
+                          'StandardAuthBackend.get_all_permissions. '
+                          'Returning an empty list.' % obj)
+
+            if settings.DEBUG:
+                raise ValueError('Unexpected object %r' % obj)
+
+            return set()
+
+        if user.is_anonymous():
+            return set()
+
+        # First, get the list of all global permissions.
+        #
+        # Django's ModelBackend doesn't support passing an object, and will
+        # return an empty set, so don't pass an object for this attempt.
+        permissions = \
+            super(StandardAuthBackend, self).get_all_permissions(user)
+
+        if obj is not None:
+            # We know now that this is a LocalSite, due to the assertion
+            # above.
+            if not hasattr(user, '_local_site_perm_cache'):
+                user._local_site_perm_cache = {}
+
+            if obj.pk not in user._local_site_perm_cache:
+                try:
+                    site_profile = user.get_site_profile(obj)
+
+                    perm_cache = set([
+                        key
+                        for key, value in site_profile.permissions.iteritems()
+                        if value
+                    ])
+                except LocalSiteProfile.DoesNotExist:
+                    perm_cache = set()
+
+                user._local_site_perm_cache[obj.pk] = perm_cache
+
+            permissions = permissions.copy()
+            permissions.update(user._local_site_perm_cache[obj.pk])
+
+        return permissions
+
+    def has_perm(self, user, perm, obj=None):
+        """Returns whether a user has the given permission.
+
+        If a LocalSite instance is passed as ``obj``, then the permissions
+        checked will be those that the user has on that LocalSite. Otherwise,
+        they will be their global permissions.
+
+        It is not legal to pass any other object.
+        """
+        if obj is not None and not isinstance(obj, LocalSite):
+            logging.error('Unexpected object %r passed to has_perm. '
+                          'Returning False.' % obj)
+
+            if settings.DEBUG:
+                raise ValueError('Unexpected object %r' % obj)
+
+            return False
+
+        if not user.is_active:
+            return False
+
+        if obj is not None:
+            if not hasattr(user, '_local_site_admin_for'):
+                user._local_site_admin_for = {}
+
+            if obj.pk not in user._local_site_admin_for:
+                user._local_site_admin_for[obj.pk] = obj.is_mutable_by(user)
+
+            if user._local_site_admin_for[obj.pk]:
+                return True
+
+        return super(StandardAuthBackend, self).has_perm(user, perm, obj)
+
 
 class NISBackend(AuthBackend):
     """Authenticate against a user on an NIS server."""
@@ -206,10 +313,15 @@ class LDAPBackend(AuthBackend):
                     ldapo.bind_s(search[0][0], password)
 
             else :
-                # Attempt to bind using the given uid and password. It may be
-                # that we really need a setting for how the DN in this is
-                # constructed; this way is correct for my system
-                userbinding=','.join([uid,settings.LDAP_BASE_DN])
+                # Bind anonymously to the server, then search for the user with
+                # the given base DN and uid. If the user is found, a fully
+                # qualified DN is returned. Authentication is then done with
+                # bind using this fully qualified DN.
+                ldapo.simple_bind_s()
+                search = ldapo.search_s(settings.LDAP_BASE_DN,
+                                        ldap.SCOPE_SUBTREE,
+                                        uid)
+                userbinding = search[0][0]
                 ldapo.bind_s(userbinding, password)
 
             return self.get_or_create_user(username, None, ldapo)
@@ -309,26 +421,30 @@ class ActiveDirectoryBackend(AuthBackend):
     def get_domain_name(self):
         return str(settings.AD_DOMAIN_NAME)
 
-    def get_ldap_search_root(self):
+    def get_ldap_search_root(self, userdomain=None):
         if getattr(settings, "AD_SEARCH_ROOT", None):
             root = [settings.AD_SEARCH_ROOT]
         else:
-            root = ['dc=%s' % x for x in self.get_domain_name().split('.')]
+            if userdomain is None:
+                userdomain = self.get_domain_name()
+
+            root = ['dc=%s' % x for x in userdomain.split('.')]
+
             if settings.AD_OU_NAME:
                 root = ['ou=%s' % settings.AD_OU_NAME] + root
 
         return ','.join(root)
 
-    def search_ad(self, con, filterstr):
+    def search_ad(self, con, filterstr, userdomain=None):
         import ldap
-        search_root = self.get_ldap_search_root()
+        search_root = self.get_ldap_search_root(userdomain)
         logging.debug('Search root ' + search_root)
         return con.search_s(search_root, scope=ldap.SCOPE_SUBTREE, filterstr=filterstr)
 
-    def find_domain_controllers_from_dns(self):
+    def find_domain_controllers_from_dns(self, userdomain=None):
         import DNS
         DNS.Base.DiscoverNameServers()
-        q = '_ldap._tcp.%s' % self.get_domain_name()
+        q = '_ldap._tcp.%s' % (userdomain or self.get_domain_name())
         req = DNS.Base.DnsRequest(q, qtype = 'SRV').req()
         return [x['data'][-2:] for x in req.answers]
 
@@ -369,12 +485,21 @@ class ActiveDirectoryBackend(AuthBackend):
 
         return seen
 
-    def get_ldap_connections(self):
+    def get_ldap_connections(self, userdomain=None):
         import ldap
         if settings.AD_FIND_DC_FROM_DNS:
-            dcs = self.find_domain_controllers_from_dns()
+            dcs = self.find_domain_controllers_from_dns(userdomain)
         else:
-            dcs = [('389', settings.AD_DOMAIN_CONTROLLER)]
+            dcs = []
+
+            for dc_entry in settings.AD_DOMAIN_CONTROLLER.split():
+                if ':' in dc_entry:
+                    host, port = dc_entry.split(':')
+                else:
+                    host = dc_entry
+                    port = '389'
+
+                dcs.append([port, host])
 
         for dc in dcs:
             port, host = dc
@@ -387,17 +512,33 @@ class ActiveDirectoryBackend(AuthBackend):
     def authenticate(self, username, password):
         import ldap
 
-        connections = self.get_ldap_connections()
         username = username.strip()
+
+        user_subdomain = ''
+
+        if '@' in username:
+            username, user_subdomain = username.split('@', 1)
+        elif '\\' in username:
+            user_subdomain, username = username.split('\\', 1)
+
+        userdomain = self.get_domain_name()
+
+        if user_subdomain:
+            userdomain = "%s.%s" % (user_subdomain, userdomain)
+
+        connections = self.get_ldap_connections(userdomain)
         required_group = settings.AD_GROUP_NAME
 
         for con in connections:
             try:
-                bind_username ='%s@%s' % (username, self.get_domain_name())
+                bind_username = '%s@%s' % (username, userdomain)
+                logging.debug("User %s is trying to log in "
+                              "via AD" % bind_username)
                 con.simple_bind_s(bind_username, password)
                 user_data = self.search_ad(
                     con,
-                    '(&(objectClass=user)(sAMAccountName=%s))' % username)
+                    '(&(objectClass=user)(sAMAccountName=%s))' % username,
+                    userdomain)
 
                 if not user_data:
                     return None

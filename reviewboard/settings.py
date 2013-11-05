@@ -83,6 +83,10 @@ MIDDLEWARE_CLASSES = [
     'reviewboard.accounts.middleware.BugzillaCookieAuthMiddleware',
     'reviewboard.admin.middleware.X509AuthMiddleware',
     'reviewboard.site.middleware.LocalSiteMiddleware',
+
+    # Keep this last so that everything is initialized before middleware
+    # from extensions are run.
+    'djblets.extensions.middleware.ExtensionsMiddlewareRunner',
 ]
 RB_EXTRA_MIDDLEWARE_CLASSES = []
 

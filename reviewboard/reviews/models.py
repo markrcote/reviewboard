@@ -79,8 +79,7 @@ class Group(models.Model):
         proper permissions, or the group is part of a LocalSite and the user is
         in the admin list.
         """
-        return (user.has_perm('reviews.change_group') or
-                (self.local_site and self.local_site.is_mutable_by(user)))
+        return user.has_perm('reviews.change_group', self.local_site)
 
     def __unicode__(self):
         return self.name
@@ -146,8 +145,8 @@ class DefaultReviewer(models.Model):
 
         LocalSite administrators can modify or delete them on their LocalSites.
         """
-        return (user.has_perm('reviews.change_default_reviewer') or
-                (self.local_site and self.local_site.is_mutable_by(user)))
+        return user.has_perm('reviews.change_default_reviewer',
+                             self.local_site)
 
     def __unicode__(self):
         return self.name
@@ -649,9 +648,19 @@ class ReviewRequest(BaseReviewRequestDetails):
         return False
 
     def is_mutable_by(self, user):
-        "Returns true if the user can modify this review request"
-        return self.submitter == user or \
-               user.has_perm('reviews.can_edit_reviewrequest')
+        """Returns whether the user can modify this review request."""
+        return (self.submitter == user or
+                user.has_perm('reviews.can_edit_reviewrequest',
+                              self.local_site))
+
+    def is_status_mutable_by(self, user):
+        """Returns whether the user can modify this review request's status."""
+        return (self.submitter == user or
+                user.has_perm('reviews.can_change_status', self.local_site))
+
+    def is_deletable_by(self, user):
+        """Returns whether the user can delete this review request."""
+        return user.has_perm('reviews.delete_reviewrequest')
 
     def get_draft(self, user=None):
         """
@@ -813,7 +822,7 @@ class ReviewRequest(BaseReviewRequestDetails):
         SUBMITTED or DISCARDED.
         """
         if (user and not self.is_mutable_by(user) and
-            not user.has_perm("reviews.can_change_status")):
+            not user.has_perm("reviews.can_change_status", self.local_site)):
             raise PermissionError
 
         if type not in [self.SUBMITTED, self.DISCARDED]:
@@ -825,6 +834,10 @@ class ReviewRequest(BaseReviewRequestDetails):
             changedesc.save()
 
             self.changedescs.add(changedesc)
+
+            if type == self.SUBMITTED:
+                self.public = True
+
             self.status = type
             self.save(update_counts=True)
 
@@ -853,7 +866,7 @@ class ReviewRequest(BaseReviewRequestDetails):
         Reopens the review request for review.
         """
         if (user and not self.is_mutable_by(user) and
-            not user.has_perm("reviews.can_change_status")):
+            not user.has_perm("reviews.can_change_status", self.local_site)):
             raise PermissionError
 
         if self.status != self.PENDING_REVIEW:
@@ -1095,6 +1108,22 @@ class ReviewRequestDraft(BaseReviewRequestDetails):
     def get_latest_diffset(self):
         """Returns the diffset for this draft."""
         return self.diffset
+
+    def is_accessible_by(self, user):
+        """Returns whether or not the user can access this draft."""
+        return self.is_mutable_by(user)
+
+    def is_mutable_by(self, user):
+        """Returns whether or not the user can modify this draft."""
+        return self.review_request.is_mutable_by(user)
+
+    def is_accessible_by(self, user):
+        """Returns whether or not the user can access this draft."""
+        return self.is_mutable_by(user)
+
+    def is_mutable_by(self, user):
+        """Returns whether or not the user can modify this draft."""
+        return self.review_request.is_mutable_by(user)
 
     @staticmethod
     def create(review_request):
@@ -1439,6 +1468,14 @@ class BaseComment(models.Model):
         return self.reply_to_id is not None
     is_reply.boolean = True
 
+    def is_accessible_by(self, user):
+        """Returns whether the user can access this comment."""
+        return self.get_review().is_accessible_by(user)
+
+    def is_mutable_by(self, user):
+        """Returns whether the user can modify this comment."""
+        return self.get_review().is_mutable_by(user)
+
     def public_replies(self, user=None):
         """
         Returns a list of public replies to this comment, optionally
@@ -1673,6 +1710,17 @@ class Review(models.Model):
                   for u in reply.participants]
 
     participants = property(get_participants)
+
+    def is_accessible_by(self, user):
+        """Returns whether the user can access this review."""
+        return ((self.public or self.user == user or user.is_superuser) and
+                self.review_request.is_accessible_by(user))
+
+    def is_mutable_by(self, user):
+        """Returns whether the user can modify this review."""
+        return ((not self.public and
+                 (self.user == user or user.is_superuser)) and
+                self.review_request.is_accessible_by(user))
 
     def __unicode__(self):
         return u"Review of '%s'" % self.review_request
