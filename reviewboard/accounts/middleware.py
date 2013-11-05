@@ -1,7 +1,6 @@
 import pytz
 
 from django.conf import settings
-from django.contrib.auth import authenticate, login
 from django.utils import timezone
 
 from reviewboard.accounts.models import Profile
@@ -25,8 +24,11 @@ class BugzillaCookieAuthMiddleware(object):
             not in settings.AUTHENTICATION_BACKENDS):
             return response
         if not request.user.is_authenticated():
-            response.delete_cookie('Bugzilla_login')
-            response.delete_cookie('Bugzilla_logincookie')
+            for key in ('Bugzilla_login', 'Bugzilla_logincookie'):
+                try:
+                    del request.session[key]
+                except KeyError:
+                    pass
             return response
         try:
             bzlogin = getattr(request.user, 'bzlogin')
@@ -35,6 +37,6 @@ class BugzillaCookieAuthMiddleware(object):
             return response
         if not bzlogin or not bzcookie:
             return response
-        response.set_cookie('Bugzilla_login', bzlogin)
-        response.set_cookie('Bugzilla_logincookie', bzcookie)
+        request.session['Bugzilla_login'] = bzlogin
+        request.session['Bugzilla_logincookie'] = bzcookie
         return response
