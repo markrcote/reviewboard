@@ -3266,6 +3266,11 @@ class RepositoryResource(WebAPIResource):
                            'for communicating with the repository and '
                            'accessing files.',
         },
+        'mirror_path': {
+            'type': str,
+            'description': 'An alternate path to the repository, for ',
+                           'lookup purposes.',
+        },
         'tool': {
             'type': str,
             'description': 'The name of the internal repository '
