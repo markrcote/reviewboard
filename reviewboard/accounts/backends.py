@@ -160,16 +160,20 @@ class StandardAuthBackend(AuthBackend, ModelBackend):
                 user._local_site_perm_cache = {}
 
             if obj.pk not in user._local_site_perm_cache:
+                perm_cache = set()
+
                 try:
                     site_profile = user.get_site_profile(obj)
+                    site_perms = site_profile.permissions or {}
 
-                    perm_cache = set([
-                        key
-                        for key, value in site_profile.permissions.iteritems()
-                        if value
-                    ])
+                    if site_perms:
+                        perm_cache = set([
+                            key
+                            for key, value in site_perms.iteritems()
+                            if value
+                        ])
                 except LocalSiteProfile.DoesNotExist:
-                    perm_cache = set()
+                    pass
 
                 user._local_site_perm_cache[obj.pk] = perm_cache
 
@@ -321,7 +325,10 @@ class LDAPBackend(AuthBackend):
                 search = ldapo.search_s(settings.LDAP_BASE_DN,
                                         ldap.SCOPE_SUBTREE,
                                         uid)
-                userbinding = search[0][0]
+                if (len(search) > 0):
+                    userbinding = search[0][0]
+                else:
+                    userbinding = ','.join([uid,settings.LDAP_BASE_DN])
                 ldapo.bind_s(userbinding, password)
 
             return self.get_or_create_user(username, None, ldapo)
