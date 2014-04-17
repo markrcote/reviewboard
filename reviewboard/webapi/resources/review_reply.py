@@ -6,9 +6,10 @@ from djblets.util.decorators import augment_method_from
 from djblets.webapi.decorators import (webapi_login_required,
                                        webapi_response_errors,
                                        webapi_request_fields)
-from djblets.webapi.errors import (DOES_NOT_EXIST, NOT_LOGGED_IN,
+from djblets.webapi.errors import (WebAPIError, DOES_NOT_EXIST, NOT_LOGGED_IN,
                                    PERMISSION_DENIED)
 
+from reviewboard.reviews.errors import PublishError
 from reviewboard.reviews.models import Review
 from reviewboard.webapi.decorators import webapi_check_local_site
 from reviewboard.webapi.mixins import MarkdownFieldsMixin
@@ -298,7 +299,10 @@ class ReviewReplyResource(BaseReviewResource):
         self._import_extra_data(reply.extra_data, extra_fields)
 
         if public:
-            reply.publish(user=request.user)
+            try:
+                reply.publish(user=request.user)
+            except PublishError, e:
+                return WebAPIError(999, str(e), http_status=500)
         else:
             reply.save()
 

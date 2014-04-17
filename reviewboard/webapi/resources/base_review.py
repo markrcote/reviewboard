@@ -7,9 +7,10 @@ from djblets.util.decorators import augment_method_from
 from djblets.webapi.decorators import (webapi_login_required,
                                        webapi_response_errors,
                                        webapi_request_fields)
-from djblets.webapi.errors import (DOES_NOT_EXIST, NOT_LOGGED_IN,
+from djblets.webapi.errors import (WebAPIError, DOES_NOT_EXIST, NOT_LOGGED_IN,
                                    PERMISSION_DENIED)
 
+from reviewboard.reviews.errors import PublishError
 from reviewboard.reviews.models import Review
 from reviewboard.webapi.base import WebAPIResource
 from reviewboard.webapi.decorators import webapi_check_local_site
@@ -298,7 +299,10 @@ class BaseReviewResource(MarkdownFieldsMixin, WebAPIResource):
         review.save()
 
         if public:
-            review.publish(user=request.user)
+            try:
+                review.publish(user=request.user)
+            except PublishError, e:
+                return WebAPIError(999, str(e), http_status=500)
 
         return 200, {
             self.item_result_key: review,

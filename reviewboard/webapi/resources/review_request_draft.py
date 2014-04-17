@@ -11,9 +11,11 @@ from djblets.util.decorators import augment_method_from
 from djblets.webapi.decorators import (webapi_login_required,
                                        webapi_response_errors,
                                        webapi_request_fields)
-from djblets.webapi.errors import (DOES_NOT_EXIST, INVALID_FORM_DATA,
-                                   NOT_LOGGED_IN, PERMISSION_DENIED)
+from djblets.webapi.errors import (WebAPIError, DOES_NOT_EXIST,
+                                   INVALID_FORM_DATA, NOT_LOGGED_IN,
+                                   PERMISSION_DENIED)
 
+from reviewboard.reviews.errors import PublishError
 from reviewboard.reviews.models import Group, ReviewRequest, ReviewRequestDraft
 from reviewboard.scmtools.errors import InvalidChangeNumberError
 from reviewboard.webapi.base import WebAPIResource
@@ -389,7 +391,10 @@ class ReviewRequestDraftResource(MarkdownFieldsMixin, WebAPIResource):
             }
 
         if request.POST.get('public', False):
-            review_request.publish(user=request.user)
+            try:
+                review_request.publish(user=request.user)
+            except PublishError, e:
+                return WebAPIError(999, str(e), http_status=500)
 
         return 200, {
             self.item_result_key: draft,

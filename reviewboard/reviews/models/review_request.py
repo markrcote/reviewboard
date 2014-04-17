@@ -21,7 +21,8 @@ from reviewboard.reviews.models.base_review_request_details import \
     BaseReviewRequestDetails
 from reviewboard.reviews.models.group import Group
 from reviewboard.reviews.models.screenshot import Screenshot
-from reviewboard.reviews.signals import (review_request_published,
+from reviewboard.reviews.signals import (review_request_publishing,
+                                         review_request_published,
                                          review_request_reopened,
                                          review_request_closed)
 from reviewboard.scmtools.models import Repository
@@ -692,6 +693,9 @@ class ReviewRequest(BaseReviewRequestDetails):
 
         if not self.is_mutable_by(user):
             raise PermissionError
+
+        review_request_publishing.send(sender=self.__class__, user=user,
+                                      review_request=self)
 
         # Decrement the counts on everything. we lose them.
         # We'll increment the resulting set during ReviewRequest.save.
