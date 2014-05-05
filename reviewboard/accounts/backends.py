@@ -114,6 +114,8 @@ class AuthBackend(object):
         The ``query`` parameter contains the value of the ``q`` search
         parameter of the web API call (e.g. /users/?q=foo), if any.
 
+        Errors can be passed up by raising accounts.errors.UserQueryError.
+
         By default, this will do nothing.
         """
         pass
